@@ -392,6 +392,170 @@ contract AccessRegistryTest is Test {
         registry.addAdmin(adminA, "");
     }
 
+    function test_adminAndOwnerCanBatchAdd() public {
+        _addAdmin(adminA);
+        address[] memory accounts = new address[](2);
+        string[] memory notes = new string[](2);
+        accounts[0] = userA;
+        accounts[1] = userB;
+        notes[0] = "a";
+        notes[1] = "b";
+
+        vm.expectEmit(true, true, false, true);
+        emit AccessRegistry.WhitelistAdded(userA, adminA, "a");
+        vm.expectEmit(true, true, false, true);
+        emit AccessRegistry.WhitelistAdded(userB, adminA, "b");
+        vm.prank(adminA);
+        registry.addToWhitelistBatch(accounts, notes);
+
+        assertTrue(registry.isWhitelisted(userA));
+        assertTrue(registry.isWhitelisted(userB));
+        assertEq(registry.whitelistNoteOf(userA), "a");
+        assertEq(registry.whitelistNoteOf(userB), "b");
+        assertEq(registry.whitelistCount(), 2);
+        vm.prank(adminA);
+        assertEq(registry.myWhitelistCount(), 2);
+
+        address userC = makeAddr("userC");
+        address[] memory more = new address[](1);
+        string[] memory moreNotes = new string[](1);
+        more[0] = userC;
+        vm.prank(owner);
+        registry.addToWhitelistBatch(more, moreNotes);
+        assertTrue(registry.isWhitelisted(userC));
+        vm.prank(owner);
+        assertEq(registry.myWhitelistCount(), 1);
+    }
+
+    function test_batchAddRevertsAndRollsBack() public {
+        _addAdmin(adminA);
+        _addUser(adminA, userA);
+
+        address[] memory accounts = new address[](2);
+        string[] memory notes = new string[](2);
+        accounts[0] = userB;
+        accounts[1] = userA;
+
+        vm.prank(adminB);
+        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        registry.addToWhitelistBatch(accounts, notes);
+
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.UserAlreadyWhitelisted.selector);
+        registry.addToWhitelistBatch(accounts, notes);
+        assertFalse(registry.isWhitelisted(userB));
+        assertEq(registry.whitelistCount(), 1);
+
+        accounts[1] = userB;
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.UserAlreadyWhitelisted.selector);
+        registry.addToWhitelistBatch(accounts, notes);
+        assertFalse(registry.isWhitelisted(userB));
+
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.EmptyBatch.selector);
+        registry.addToWhitelistBatch(new address[](0), new string[](0));
+
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.BatchLengthMismatch.selector);
+        registry.addToWhitelistBatch(accounts, new string[](1));
+
+        accounts[1] = address(0);
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.ZeroAddress.selector);
+        registry.addToWhitelistBatch(accounts, notes);
+        assertFalse(registry.isWhitelisted(userB));
+
+        accounts[0] = userB;
+        accounts[1] = makeAddr("userC");
+        notes[1] = new string(65);
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.NoteTooLong.selector);
+        registry.addToWhitelistBatch(accounts, notes);
+        assertEq(registry.whitelistCount(), 1);
+
+        address[] memory tooMany = new address[](51);
+        string[] memory tooManyNotes = new string[](51);
+        for (uint256 i; i < tooMany.length; i++) {
+            tooMany[i] = address(uint160(i + 1));
+        }
+        vm.prank(owner);
+        vm.expectRevert(AccessRegistry.BatchTooLarge.selector);
+        registry.addToWhitelistBatch(tooMany, tooManyNotes);
+    }
+
+    function test_batchRemoveKeepsOperatorRules() public {
+        _addAdmin(adminA);
+        _addAdmin(adminB);
+        _addUser(adminA, userA);
+        _addUser(adminB, userB);
+        _addUser(owner, userS);
+
+        address[] memory own = new address[](1);
+        own[0] = userA;
+        vm.prank(adminA);
+        registry.removeFromWhitelistBatch(own);
+        assertFalse(registry.isWhitelisted(userA));
+        assertEq(registry.whitelistCount(), 2);
+
+        address[] memory mixed = new address[](2);
+        mixed[0] = userS;
+        mixed[1] = userB;
+        vm.prank(adminB);
+        vm.expectRevert(AccessRegistry.NotEntryOwner.selector);
+        registry.removeFromWhitelistBatch(mixed);
+        assertTrue(registry.isWhitelisted(userS));
+        assertTrue(registry.isWhitelisted(userB));
+
+        vm.prank(owner);
+        registry.removeFromWhitelistBatch(mixed);
+        assertFalse(registry.isWhitelisted(userS));
+        assertFalse(registry.isWhitelisted(userB));
+        assertEq(registry.whitelistCount(), 0);
+
+        address[] memory twice = new address[](2);
+        twice[0] = userA;
+        twice[1] = userA;
+        _addUser(adminA, userA);
+        vm.prank(adminA);
+        vm.expectRevert(AccessRegistry.NotListed.selector);
+        registry.removeFromWhitelistBatch(twice);
+        assertTrue(registry.isWhitelisted(userA));
+
+        vm.prank(owner);
+        vm.expectRevert(AccessRegistry.EmptyBatch.selector);
+        registry.removeFromWhitelistBatch(new address[](0));
+
+        address[] memory tooMany = new address[](51);
+        vm.prank(owner);
+        vm.expectRevert(AccessRegistry.BatchTooLarge.selector);
+        registry.removeFromWhitelistBatch(tooMany);
+
+        vm.prank(makeAddr("outsider"));
+        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        registry.removeFromWhitelistBatch(own);
+    }
+
+    function test_batchAcceptsFifty() public {
+        address[] memory accounts = new address[](50);
+        string[] memory notes = new string[](50);
+        for (uint256 i; i < accounts.length; i++) {
+            accounts[i] = address(uint160(1000 + i));
+        }
+
+        vm.prank(owner);
+        registry.addToWhitelistBatch(accounts, notes);
+        assertEq(registry.whitelistCount(), 50);
+        assertTrue(registry.isWhitelisted(accounts[0]));
+        assertTrue(registry.isWhitelisted(accounts[49]));
+
+        vm.prank(owner);
+        registry.removeFromWhitelistBatch(accounts);
+        assertEq(registry.whitelistCount(), 0);
+        assertFalse(registry.isWhitelisted(accounts[0]));
+        assertFalse(registry.isWhitelisted(accounts[49]));
+    }
+
     function _expectOwnerOnly(address caller) private {
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, caller));
     }

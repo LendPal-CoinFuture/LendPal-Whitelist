@@ -64,6 +64,39 @@ contract AccessRegistryHandler is Test {
         } catch {}
     }
 
+    function addToWhitelistBatch(uint256 callerSeed, uint256 userSeed) external {
+        address caller = _caller(callerSeed);
+        address first = _users[userSeed % _users.length];
+        address second = _users[(userSeed + 1) % _users.length];
+        if (first == second) return;
+        address[] memory accounts = new address[](2);
+        string[] memory notes = new string[](2);
+        accounts[0] = first;
+        accounts[1] = second;
+        vm.prank(caller);
+        try registry.addToWhitelistBatch(accounts, notes) {
+            require(addedBy[first] == address(0) && addedBy[second] == address(0), "user already tracked");
+            _note(first, caller);
+            _note(second, caller);
+        } catch {}
+    }
+
+    function removeFromWhitelistBatch(uint256 callerSeed, uint256 userSeed) external {
+        address caller = _caller(callerSeed);
+        address first = _users[userSeed % _users.length];
+        address second = _users[(userSeed + 3) % _users.length];
+        if (first == second) return;
+        address[] memory accounts = new address[](2);
+        accounts[0] = first;
+        accounts[1] = second;
+        vm.prank(caller);
+        try registry.removeFromWhitelistBatch(accounts) {
+            require(addedBy[first] != address(0) && addedBy[second] != address(0), "removed unknown user");
+            addedBy[first] = address(0);
+            addedBy[second] = address(0);
+        } catch {}
+    }
+
     function transferOwnership(uint256 callerSeed, uint256 nextSeed) external {
         address caller = _caller(callerSeed);
         address nextOwner = _nextOwner(nextSeed);
@@ -139,14 +172,16 @@ contract AccessRegistryInvariantTest is Test {
         }
 
         handler = new AccessRegistryHandler(registry, makeAddr("outsider"), candidates, users);
-        bytes4[] memory selectors = new bytes4[](7);
+        bytes4[] memory selectors = new bytes4[](9);
         selectors[0] = handler.addAdmin.selector;
         selectors[1] = handler.removeAdmin.selector;
         selectors[2] = handler.addToWhitelist.selector;
         selectors[3] = handler.removeFromWhitelist.selector;
-        selectors[4] = handler.transferOwnership.selector;
-        selectors[5] = handler.acceptOwnership.selector;
-        selectors[6] = handler.acceptPending.selector;
+        selectors[4] = handler.addToWhitelistBatch.selector;
+        selectors[5] = handler.removeFromWhitelistBatch.selector;
+        selectors[6] = handler.transferOwnership.selector;
+        selectors[7] = handler.acceptOwnership.selector;
+        selectors[8] = handler.acceptPending.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
         excludeContract(address(registry));

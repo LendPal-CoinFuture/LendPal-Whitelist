@@ -9,6 +9,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 /// @notice 超级管理员管普通管理员。普通管理员只管自己加入的白名单。
 ///         普通管理员不能添加、删除、修改任何管理员。
 ///         普通管理员不能删除或修改其他普通管理员加入的白名单。
+///         批量加入和批量移出与单笔使用同一套规则，一次最多 50 条。
 ///         合约里没有修改白名单记录和管理员身份的函数。
 contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     /// @notice 普通管理员人数上限的默认值。超级管理员不占名额。
@@ -17,6 +18,9 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
 
     /// @notice 翻页时一页最多 50 条。
     uint256 public constant MAX_PAGE_SIZE = 50;
+
+    /// @notice 一次批量加入或移出最多 50 个地址。
+    uint256 public constant MAX_BATCH_SIZE = 50;
 
     /// @notice 白名单备注最长 64 字节。空备注也可以。
     uint256 public constant MAX_NOTE_LENGTH = 64;
@@ -72,6 +76,9 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     error AdminCapacityReached();
     error AdminLimitTooSmall();
     error NoteTooLong();
+    error EmptyBatch();
+    error BatchLengthMismatch();
+    error BatchTooLarge();
 
     event AdminAdded(address indexed account, string note);
     event AdminRemoved(address indexed account);
@@ -200,6 +207,45 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     ///         这个地址已经被人加入时会失败，不能改记到自己名下。
     ///         备注可以是空字符串，最长 64 字节。
     function addToWhitelist(address account, string calldata note) external onlyOperator {
+        _addToWhitelist(account, note);
+    }
+
+    /// @notice 一次加入多条白名单。超级管理员和普通管理员都能调用。
+    ///         规则和单笔加入相同。地址和备注一一对应，一次最多 50 条。
+    ///         有一条不合法时，整笔回滚，前面的地址也不会留下。
+    function addToWhitelistBatch(address[] calldata accounts, string[] calldata notes) external onlyOperator {
+        uint256 length = accounts.length;
+        if (length == 0) revert EmptyBatch();
+        if (length != notes.length) revert BatchLengthMismatch();
+        if (length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        for (uint256 i = 0; i < length; i++) {
+            _addToWhitelist(accounts[i], notes[i]);
+        }
+    }
+
+    /// @notice 移出白名单。没有修改函数。
+    ///         普通管理员只能删除自己加入的用户。
+    ///         删除其他普通管理员加入的用户会失败。
+    ///         超级管理员可以删除任何一条。
+    function removeFromWhitelist(address account) external onlyOperator {
+        _removeFromWhitelist(account);
+    }
+
+    /// @notice 一次移出多条白名单。超级管理员和普通管理员都能调用。
+    ///         规则和单笔移出相同。一次最多 50 条。
+    ///         普通管理员的这一批里只要有一条不是自己加入的，整笔失败。
+    ///         有一条不合法时，整笔回滚，前面的地址也不会被移出。
+    function removeFromWhitelistBatch(address[] calldata accounts) external onlyOperator {
+        uint256 length = accounts.length;
+        if (length == 0) revert EmptyBatch();
+        if (length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        for (uint256 i = 0; i < length; i++) {
+            _removeFromWhitelist(accounts[i]);
+        }
+    }
+
+    /// @dev 单笔和批量共用。调用人已经过 onlyOperator。
+    function _addToWhitelist(address account, string calldata note) private {
         if (account == address(0)) revert ZeroAddress();
         if (bytes(note).length > MAX_NOTE_LENGTH) revert NoteTooLong();
 
@@ -216,11 +262,8 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
         emit WhitelistAdded(account, msg.sender, note);
     }
 
-    /// @notice 移出白名单。没有修改函数。
-    ///         普通管理员只能删除自己加入的用户。
-    ///         删除其他普通管理员加入的用户会失败。
-    ///         超级管理员可以删除任何一条。
-    function removeFromWhitelist(address account) external onlyOperator {
+    /// @dev 单笔和批量共用。调用人已经过 onlyOperator。
+    function _removeFromWhitelist(address account) private {
         Layout storage $ = _layout();
         address addedBy = $.whitelistAddedBy[account];
         if (addedBy == address(0)) revert NotListed();
