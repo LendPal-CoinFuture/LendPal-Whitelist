@@ -6,7 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {AccessRegistry} from "../src/AccessRegistry.sol";
+import {AccessRegistry} from "../contracts/AccessRegistry.sol";
 
 contract AccessRegistryV2 is AccessRegistry {
     function versionMarker() external pure returns (uint256) {

@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
-import {AccessRegistry} from "../src/AccessRegistry.sol";
+import {AccessRegistry} from "../contracts/AccessRegistry.sol";
 
 /// @notice 升级已经部署的 Sepolia 代理。代理地址不变。
 /// @dev Sepolia 部署逻辑合约约需 14M gas；若 forge script 估气过低导致 CREATE OOG，先单独 forge create / cast send --create，再 upgradeToAndCall。
